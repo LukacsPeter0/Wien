@@ -1,0 +1,159 @@
+{
+  "name": "FB Scraper - Clean Direct Excel Export",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "node-trigger",
+      "name": "When clicking ‘Test workflow’",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://downloads.lawvision.eu/fb.html",
+        "responseFormat": "string",
+        "options": {}
+      },
+      "id": "node-fetch-html",
+      "name": "1. Download fb.html",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.data || $input.first().json.body || '';\nconst text = typeof raw === 'string' ? raw : JSON.stringify(raw);\n\nconst items = [];\n// Pontos egyezés a küldött fájl struktúrájára\nconst regex = /<a\\s+id=\"([^\"]+)\"\\s+href=\"([^\"]+)\">([^<]+)<\\/a>/g;\nlet match;\nlet counter = 1;\n\nwhile ((match = regex.exec(text)) !== null) {\n  items.push({\n    json: {\n      DBID: counter++,\n      id: match[1],\n      href: match[2],\n      linktext: match[3].trim()\n    }\n  });\n}\n\nreturn items;"
+      },
+      "id": "node-parse-links",
+      "name": "2. Parse FB-Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "operation": "toFile",
+        "fileFormat": "xlsx",
+        "options": {
+          "fileName": "FB-Data.xlsx"
+        }
+      },
+      "id": "node-excel-fb-data",
+      "name": "Download FB-Data.xlsx",
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "typeVersion": 2,
+      "position": [920, 160]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.href }}",
+        "responseFormat": "string",
+        "options": {
+          "allowUnauthorizedCerts": true,
+          "timeout": 15000,
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 500
+            }
+          }
+        }
+      },
+      "id": "node-fetch-details",
+      "name": "3. Fetch Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfunction clean(str) {\n  if (!str) return '';\n  return str.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nfor (let i = 0; i < items.length; i++) {\n  const rawHtml = items[i].json.data || items[i].json.body || '';\n  const rowObj = {};\n\n  // 1. Edikt blokk szűrése\n  const ediktMatch = rawHtml.match(/<div[^>]*id=[\"']edikt[\"'][^>]*>([\\s\\S]*?)<\\/div>/i);\n  const content = ediktMatch ? ediktMatch[1] : rawHtml;\n\n  // 2. h1 és h2 fejléc mezők kinyerése\n  const h1Match = content.match(/<h1[^>]*>([\\s\\S]*?)<\\/h1>/i);\n  const h2Match = content.match(/<h2[^>]*>([\\s\\S]*?)<\\/h2>/i);\n  rowObj['h1'] = h1Match ? clean(h1Match[1]) : '';\n  rowObj['h2'] = h2Match ? clean(h2Match[1]) : '';\n\n  // 3. Mezőpárok: span (title) és p (value)\n  const rowRegex = /<div[^>]*class=[\"'][^\"']*row[^\"']*[\"'][^>]*>([\\s\\S]*?)<\\/div>/gi;\n  let rMatch;\n\n  while ((rMatch = rowRegex.exec(content)) !== null) {\n    const rowInner = rMatch[1];\n    const span = rowInner.match(/<span[^>]*class=[\"'][^\"']*col-sm-3[^\"']*[\"'][^>]*>([\\s\\S]*?)<\\/span>/i);\n    const p = rowInner.match(/<p[^>]*class=[\"'][^\"']*col-sm-9[^\"']*[\"'][^>]*>([\\s\\S]*?)<\\/p>/i);\n\n    if (span && p) {\n      const key = clean(span[1]).replace(/[:]+$/, '');\n      const val = clean(p[1]);\n      if (key) {\n        rowObj[key] = val;\n      }\n    }\n  }\n\n  results.push({ json: rowObj });\n}\n\nreturn results;"
+      },
+      "id": "node-parse-details",
+      "name": "4. Parse FB-Datadetails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 420]
+    },
+    {
+      "parameters": {
+        "operation": "toFile",
+        "fileFormat": "xlsx",
+        "options": {
+          "fileName": "FB-Datadetails.xlsx"
+        }
+      },
+      "id": "node-excel-fb-details",
+      "name": "Download FB-Datadetails.xlsx",
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "typeVersion": 2,
+      "position": [1400, 420]
+    }
+  ],
+  "connections": {
+    "When clicking ‘Test workflow’": {
+      "main": [
+        [
+          {
+            "node": "1. Download fb.html",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Download fb.html": {
+      "main": [
+        [
+          {
+            "node": "2. Parse FB-Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Parse FB-Data": {
+      "main": [
+        [
+          {
+            "node": "Download FB-Data.xlsx",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "3. Fetch Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Fetch Details": {
+      "main": [
+        [
+          {
+            "node": "4. Parse FB-Datadetails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Parse FB-Datadetails": {
+      "main": [
+        [
+          {
+            "node": "Download FB-Datadetails.xlsx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
