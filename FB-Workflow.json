@@ -1,0 +1,218 @@
+{
+  "name": "Group 6 - FB Workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-1400, 300],
+      "id": "trigger-1",
+      "name": "Manual Trigger"
+    },
+    {
+      "parameters": {
+        "url": "https://downloads.lawvision.eu/fb.html",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-1180, 300],
+      "id": "http-fb-html",
+      "name": "Get fb.html"
+    },
+    {
+      "parameters": {
+        "jsCode": "// A bemenet: a fb.html teljes HTML tartalma\nconst html = $input.first().json.data;\n\nconst items = [];\nconst aTagRegex = /<a\\b[^>]*>([^<]*)<\\/a>/g;\nlet match;\n\nwhile ((match = aTagRegex.exec(html)) !== null) {\n  const fullTag = match[0];\n  const linktext = match[1].trim();\n\n  const idMatch = fullTag.match(/id=\"([^\"]+)\"/);\n  const hrefMatch = fullTag.match(/href=\"([^\"]+)\"/);\n\n  if (idMatch && hrefMatch) {\n    items.push({\n      json: {\n        id: idMatch[1],\n        href: hrefMatch[1],\n        linktext: linktext\n      }\n    });\n  }\n}\n\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-960, 300],
+      "id": "code-extract-links",
+      "name": "Extract Links"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_FB-Data_TABLE_ID",
+          "mode": "list",
+          "cachedResultName": "FB-Data"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        }
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [-740, 300],
+      "id": "datatable-insert-fbdata",
+      "name": "Insert into FB-Data"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [-520, 300],
+      "id": "loop-over-links",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.href }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-280, 420],
+      "id": "http-detail-page",
+      "name": "Get Detail Page"
+    },
+    {
+      "parameters": {
+        "jsCode": "// A bemenet: az adott href oldal HTML tartalma\nconst html = $input.first().json.data;\n\n// Az eredeti FB-Data rekord (id, href) visszahozasa az \"Extract Links\" node-bol\nconst sourceItem = $('Extract Links').item.json;\n\nfunction extractBalancedDiv(html, id) {\n  const startTagRegex = new RegExp(`<div[^>]*id=[\"']${id}[\"'][^>]*>`);\n  const startMatch = startTagRegex.exec(html);\n  if (!startMatch) return null;\n\n  let idx = startMatch.index + startMatch[0].length;\n  let depth = 1;\n  const tagRegex = /<div\\b[^>]*>|<\\/div>/g;\n  tagRegex.lastIndex = idx;\n\n  let m;\n  while ((m = tagRegex.exec(html)) !== null) {\n    if (m[0].startsWith('</div')) {\n      depth--;\n    } else {\n      depth++;\n    }\n    if (depth === 0) {\n      return html.substring(idx, m.index);\n    }\n  }\n  return null;\n}\n\nconst edikt = extractBalancedDiv(html, 'edikt');\n\nconst h1Match = html.match(/<h1>\\s*<small>([^<]*)<\\/small>\\s*<\\/h1>/);\nconst h2Match = html.match(/<h2>\\s*<small>([^<]*)<\\/small>\\s*<\\/h2>/);\n\nconst h1 = h1Match ? h1Match[1].trim() : null;\nconst h2 = h2Match ? h2Match[1].trim() : null;\n\nconst rows = [];\nif (edikt) {\n  const rowRegex = /<div class=\"row\">\\s*<span class=\"col-sm-3 text-right\">([^<]*)<\\/span>\\s*<p class=\"col-sm-9\">(?:<strong>)?([^<]*)(?:<\\/strong>)?<\\/p>\\s*<\\/div>/g;\n  let rowMatch;\n  while ((rowMatch = rowRegex.exec(edikt)) !== null) {\n    const fieldname = rowMatch[1].replace(/:\\s*$/, '').trim();\n    const value = rowMatch[2].trim();\n    rows.push({ fieldname, value });\n  }\n}\n\nconst output = [];\n\nif (h1) output.push({ json: { link_id: sourceItem.id, href: sourceItem.href, fieldname: 'h1', value: h1 } });\nif (h2) output.push({ json: { link_id: sourceItem.id, href: sourceItem.href, fieldname: 'h2', value: h2 } });\n\nfor (const row of rows) {\n  output.push({\n    json: {\n      link_id: sourceItem.id,\n      href: sourceItem.href,\n      fieldname: row.fieldname,\n      value: row.value\n    }\n  });\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-60, 420],
+      "id": "code-extract-details",
+      "name": "Extract Details"
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_FB-Datadetails_TABLE_ID",
+          "mode": "list",
+          "cachedResultName": "FB-Datadetails"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        }
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [160, 420],
+      "id": "datatable-insert-fbdetails",
+      "name": "Insert into FB-Datadetails"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_FB-Data_TABLE_ID",
+          "mode": "list",
+          "cachedResultName": "FB-Data"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [-280, 100],
+      "id": "datatable-get-fbdata",
+      "name": "Get all FB-Data"
+    },
+    {
+      "parameters": {
+        "operation": "toXlsx",
+        "options": {
+          "fileName": "FB-Data.xlsx"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [-60, 100],
+      "id": "convert-fbdata-xlsx",
+      "name": "Convert FB-Data to XLSX"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_FB-Datadetails_TABLE_ID",
+          "mode": "list",
+          "cachedResultName": "FB-Datadetails"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [-280, 200],
+      "id": "datatable-get-fbdetails",
+      "name": "Get all FB-Datadetails"
+    },
+    {
+      "parameters": {
+        "operation": "toXlsx",
+        "options": {
+          "fileName": "FB-Datadetails.xlsx"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [-60, 200],
+      "id": "convert-fbdetails-xlsx",
+      "name": "Convert FB-Datadetails to XLSX"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Get fb.html", "type": "main", "index": 0 }]]
+    },
+    "Get fb.html": {
+      "main": [[{ "node": "Extract Links", "type": "main", "index": 0 }]]
+    },
+    "Extract Links": {
+      "main": [[{ "node": "Insert into FB-Data", "type": "main", "index": 0 }]]
+    },
+    "Insert into FB-Data": {
+      "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          { "node": "Get all FB-Data", "type": "main", "index": 0 },
+          { "node": "Get all FB-Datadetails", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Get Detail Page", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Get Detail Page": {
+      "main": [[{ "node": "Extract Details", "type": "main", "index": 0 }]]
+    },
+    "Extract Details": {
+      "main": [[{ "node": "Insert into FB-Datadetails", "type": "main", "index": 0 }]]
+    },
+    "Insert into FB-Datadetails": {
+      "main": [[{ "node": "Loop Over Items", "type": "main", "index": 0 }]]
+    },
+    "Get all FB-Data": {
+      "main": [[{ "node": "Convert FB-Data to XLSX", "type": "main", "index": 0 }]]
+    },
+    "Get all FB-Datadetails": {
+      "main": [[{ "node": "Convert FB-Datadetails to XLSX", "type": "main", "index": 0 }]]
+    }
+  }
+}
