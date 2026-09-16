@@ -1,0 +1,155 @@
+{
+  "name": "FB Scraper - Guaranteed Finish",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "6f3fdf46-ebd7-483d-b6a0-0a6166f7f978",
+      "name": "When clicking ‘Test workflow’",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -768,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://downloads.lawvision.eu/fb.html",
+        "options": {}
+      },
+      "id": "3fb7cc05-7439-463c-a15b-0733a5e7686f",
+      "name": "1. Download fb.html",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -544,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.data || $input.first().json.body || '';\nconst text = typeof raw === 'string' ? raw : JSON.stringify(raw);\n\nconst results = [];\nconst lines = text.split('\\n');\nlet dbid = 1;\n\nfor (const line of lines) {\n  const match = line.match(/<a\\s+id=\"([^\"]+)\"\\s+href=\"([^\"]+)\">([^<]+)<\\/a>/i);\n  if (match) {\n    results.push({\n      json: {\n        DBID: dbid++,\n        id: match[1],\n        href: match[2].replace('http://', 'https://'),\n        linktext: match[3].trim()\n      }\n    });\n  }\n}\n\nreturn results.slice(0, 233);"
+      },
+      "id": "9d76c493-038e-4132-99f1-1ade6a15f635",
+      "name": "2. Parse FB-Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "toFile",
+        "fileFormat": "xlsx",
+        "options": {
+          "fileName": "FB-Data.xlsx"
+        }
+      },
+      "id": "ca5f8f08-d6d2-49a4-8fc7-dbc436f4ad8d",
+      "name": "Download FB-Data.xlsx",
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const links = $input.all().map(i => i.json.href);\nconst results = [];\n\nfunction clean(str) {\n  if (!str) return '';\n  return str.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nfunction extractEdikt(html) {\n  const startIdx = html.indexOf('id=\"edikt\"');\n  if (startIdx === -1) return html;\n  const openTagEnd = html.indexOf('>', startIdx);\n  if (openTagEnd === -1) return html;\n  \n  let depth = 1;\n  let curr = openTagEnd + 1;\n  const divRegex = /<\\/?div\\b[^>]*>/gi;\n  divRegex.lastIndex = curr;\n  let m;\n  \n  while ((m = divRegex.exec(html)) !== null) {\n    if (m[0].toLowerCase().startsWith('</div')) {\n      depth--;\n    } else {\n      depth++;\n    }\n    if (depth === 0) {\n      return html.substring(openTagEnd + 1, m.index);\n    }\n  }\n  return html.substring(openTagEnd + 1);\n}\n\nconst batchSize = 15;\n\nfor (let i = 0; i < links.length; i += batchSize) {\n  const batch = links.slice(i, i + batchSize);\n  const promises = batch.map(async (url) => {\n    try {\n      const response = await this.helpers.httpRequest({\n        method: 'GET',\n        url: url,\n        headers: {\n          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'\n        },\n        timeout: 10000,\n        json: false\n      });\n      \n      const rawHtml = typeof response === 'string' ? response : (response.data || '');\n      const rowObj = {};\n      \n      // 1. h1 és h2 mezők\n      const h1Match = rawHtml.match(/<h1[^>]*>([\\s\\S]*?)<\\/h1>/i);\n      const h2Match = rawHtml.match(/<h2[^>]*>([\\s\\S]*?)<\\/h2>/i);\n      rowObj['h1'] = h1Match ? clean(h1Match[1]) : '';\n      rowObj['h2'] = h2Match ? clean(h2Match[1]) : '';\n      \n      // 2. A teljes edikt blokk kibontása\n      const content = extractEdikt(rawHtml);\n      \n      // 3. row elemek kinyerése (span mint mezőnév, p mint érték)\n      const rowRegex = /<div[^>]*class=[\"'][^\"']*row[^\"']*[\"'][^>]*>([\\s\\S]*?)<\\/div>/gi;\n      let rMatch;\n      while ((rMatch = rowRegex.exec(content)) !== null) {\n        const span = rMatch[1].match(/<span[^>]*class=[\"'][^\"']*col-sm-3[^\"']*[\"'][^>]*>([\\s\\S]*?)<\\/span>/i);\n        const p = rMatch[1].match(/<p[^>]*class=[\"'][^\"']*col-sm-9[^\"']*[\"'][^>]*>([\\s\\S]*?)<\\/p>/i);\n        if (span && p) {\n          const key = clean(span[1]).replace(/[:]+$/, '');\n          if (key) rowObj[key] = clean(p[1]);\n        }\n      }\n      return rowObj;\n    } catch (e) {\n      return null;\n    }\n  });\n\n  const batchResults = await Promise.all(promises);\n  for (const res of batchResults) {\n    if (res) results.push({ json: res });\n  }\n}\n\nreturn results;"
+      },
+      "id": "4be3f027-6bda-485c-a193-8cbf04320552",
+      "name": "3. Scrape All Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toFile",
+        "fileFormat": "xlsx",
+        "options": {
+          "fileName": "FB-Datadetails.xlsx"
+        }
+      },
+      "id": "a56bbce5-b107-4837-8e10-506ba62b77c3",
+      "name": "Download FB-Datadetails.xlsx",
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "typeVersion": 2,
+      "position": [
+        128,
+        96
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Test workflow’": {
+      "main": [
+        [
+          {
+            "node": "1. Download fb.html",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Download fb.html": {
+      "main": [
+        [
+          {
+            "node": "2. Parse FB-Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Parse FB-Data": {
+      "main": [
+        [
+          {
+            "node": "Download FB-Data.xlsx",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "3. Scrape All Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Scrape All Details": {
+      "main": [
+        [
+          {
+            "node": "Download FB-Datadetails.xlsx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "359e6688-64fb-41b0-8e11-c2c0f0470208",
+  "meta": {
+    "instanceId": "6a9ba0622a9e3d6aeda2c40ff5a1986806baf8e896556aacf0b0dccf225bdbea"
+  },
+  "nodeGroups": [],
+  "id": "xlj6WtkUTnLFDldW",
+  "tags": []
+}
